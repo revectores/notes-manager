@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>笔记知识库</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+      font-size:14px;line-height:1.6;color:#333;
+      display:flex;height:100vh;overflow:hidden;
+    }
+
+    /* ── 左侧目录树 ── */
+    #tree-panel{
+      width:300px;min-width:300px;
+      border-right:1px solid #e8e8e8;
+      display:flex;flex-direction:column;
+      background:#fafafa;overflow:hidden;
+    }
+    #tree-header{
+      padding:.5rem .8rem .4rem;
+      border-bottom:1px solid #e8e8e8;flex-shrink:0;
+    }
+    #tree-header-label{
+      font-size:.72rem;font-weight:600;color:#888;
+      text-transform:uppercase;letter-spacing:.06em;
+      margin-bottom:.35rem;
+    }
+    #tree-filter{
+      width:100%;font-size:.78rem;padding:.25rem .5rem;
+      border:1px solid #ddd;border-radius:3px;
+      font-family:inherit;background:#fff;color:#333;
+      box-sizing:border-box;
+    }
+    #tree-filter:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px #cce0ff40}
+    #tree-filter::placeholder{color:#ccc}
+    #tree-scroll{flex:1;overflow-y:auto;padding:.4rem 0}
+    .tree-node{user-select:none}
+    .tree-row{
+      display:flex;align-items:center;gap:3px;
+      padding:2px 8px 2px 0;cursor:pointer;
+      border-radius:3px;white-space:nowrap;overflow:hidden;
+    }
+    .tree-row:hover{background:#efefef}
+    .tree-row.selected{background:#e3eeff;color:#0055cc}
+    .tree-row.selected .tree-count{color:#4488dd}
+    .tree-toggle{
+      width:14px;flex-shrink:0;font-size:.6rem;color:#bbb;
+      text-align:center;cursor:pointer;
+    }
+    .tree-toggle:hover{color:#555}
+    .tree-name{flex:1;overflow:hidden;text-overflow:ellipsis;font-size:.82rem;color:#444}
+    .tree-row.selected .tree-name{color:#0055cc}
+    .tree-count{font-size:.7rem;color:#bbb;flex-shrink:0;margin-right:4px}
+    .tree-children{display:none}
+    .tree-children.open{display:block}
+
+    /* ── 右侧主面板 ── */
+    #main-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:1rem 1.2rem}
+    #main-top{display:flex;align-items:baseline;gap:.8rem;margin-bottom:.6rem;flex-shrink:0}
+    h1{font-size:1.2rem;font-weight:600;border-bottom:none;white-space:nowrap}
+    #reload-btn{
+      font-size:.73rem;color:#bbb;cursor:pointer;
+      border:none;background:none;padding:0;
+    }
+    #reload-btn:hover{color:#555}
+    #search-input{
+      width:100%;font-size:.95rem;padding:.45rem .7rem;
+      border:1px solid #ddd;border-radius:4px;
+      font-family:inherit;flex-shrink:0;
+    }
+    #search-input:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px #cce0ff}
+    #status{font-size:.76rem;color:#aaa;margin:.4rem 0;flex-shrink:0;min-height:1em}
+    #results{list-style:none;flex:1;overflow-y:auto;padding-right:4px}
+    #results li{padding:.55rem 0;border-bottom:1px solid #f0f0f0;position:relative}
+    #results li:last-child{border-bottom:none}
+    #results li:hover .del-btn{opacity:1}
+    #results a{font-size:.92rem;font-weight:500;color:#0066cc;text-decoration:none}
+    #results a:hover{text-decoration:underline}
+    .crumb{font-size:.72rem;color:#bbb;margin:.1rem 0 .2rem}
+    .crumb-link{cursor:pointer}
+    .crumb-link:hover{color:#0066cc;text-decoration:underline}
+    .snippet{font-size:.82rem;color:#666;line-height:1.5}
+    mark{background:#fff3b0;color:inherit;border-radius:2px;padding:0 1px}
+    .row-actions{
+      position:absolute;top:.55rem;right:0;
+      display:flex;gap:4px;opacity:0;transition:opacity .1s;
+    }
+    #results li:hover .row-actions{opacity:1}
+    .del-btn,.edit-btn{
+      background:none;border:none;cursor:pointer;
+      font-size:.82rem;color:#ccc;padding:0 2px;line-height:1;
+      text-decoration:none;
+    }
+    .del-btn:hover{color:#cc3333}
+    .edit-btn:hover{color:#0066cc}
+
+    @media(max-width:600px){
+      #tree-panel{display:none}
+    }
+  </style>
+</head>
+<body>
+
+<aside id="tree-panel">
+  <div id="tree-header">
+    <div id="tree-header-label">目录</div>
+    <input id="tree-filter" type="text" placeholder="筛选分类…" autocomplete="off" spellcheck="false">
+  </div>
+  <div id="tree-scroll">
+    <div id="tree-container"></div>
+  </div>
+</aside>
+
+<div id="main-panel">
+  <div id="main-top">
+    <h1>笔记知识库</h1>
+    <button id="reload-btn" title="重新加载索引">↻ 重载</button>
+  </div>
+  <input id="search-input" type="text" placeholder="搜索笔记…" autofocus autocomplete="off" spellcheck="false">
+  <div id="status"></div>
+  <ul id="results"></ul>
+</div>
+
+<script>
+const input     = document.getElementById('search-input');
+const status    = document.getElementById('status');
+const results   = document.getElementById('results');
+const reloadBtn = document.getElementById('reload-btn');
+const treeContainer = document.getElementById('tree-container');
+
+let timer, totalCount = 0, selectedCls = '', selectedRow = null;
+const rowByPath = {};
+
+// ── 初始化 ────────────────────────────────────────────────────────────────────
+
+Promise.all([
+  fetch('/api/search').then(r => r.json()),
+  fetch('/api/tree').then(r => r.json()),
+]).then(([search, tree]) => {
+  totalCount = search.count;
+  status.textContent = search.count + ' 篇笔记';
+  renderTree(tree, treeContainer, 0);
+}).catch(() => {
+  status.textContent = '加载失败';
+  treeContainer.textContent = '加载失败';
+});
+
+// ── 重载 ──────────────────────────────────────────────────────────────────────
+
+reloadBtn.addEventListener('click', () => {
+  reloadBtn.textContent = '↻ …';
+  fetch('/api/reload').then(r => r.json()).then(d => {
+    totalCount = d.count;
+    status.textContent = d.count + ' 篇笔记（已重载）';
+    reloadBtn.textContent = '↻ 重载';
+    return fetch('/api/tree').then(r => r.json());
+  }).then(tree => {
+    treeContainer.innerHTML = '';
+    for (const k in rowByPath) delete rowByPath[k];
+    renderTree(tree, treeContainer, 0);
+  });
+});
+
+// ── 目录树渲染 ────────────────────────────────────────────────────────────────
+
+function renderTree(node, container, depth) {
+  // 根节点特殊处理：显示为"全部笔记"
+  if (depth === 0) {
+    const allRow = makeRow('全部笔记', '', node.count, container, depth);
+    allRow.classList.add('selected');
+    selectedRow = allRow;
+  }
+
+  (node.children || []).forEach(child => {
+    const nodeEl = document.createElement('div');
+    nodeEl.className = 'tree-node';
+    container.appendChild(nodeEl);
+
+    const hasChildren = child.children && child.children.length > 0;
+    const row = makeRow(child.name, child.path, child.count, nodeEl, depth + 1);
+
+    if (hasChildren) {
+      const childrenEl = document.createElement('div');
+      childrenEl.className = 'tree-children';
+      nodeEl.appendChild(childrenEl);
+
+      const toggle = row.querySelector('.tree-toggle');
+      toggle.textContent = '▸';
+      toggle.addEventListener('click', e => {
+        e.stopPropagation();
+        const open = childrenEl.classList.toggle('open');
+        toggle.textContent = open ? '▾' : '▸';
+      });
+
+      renderTree(child, childrenEl, depth + 1);
+    }
+  });
+}
+
+function makeRow(name, path, count, container, depth) {
+  const row = document.createElement('div');
+  row.className = 'tree-row';
+  row.style.paddingLeft = (8 + depth * 12) + 'px';
+
+  const hasChildren = false; // toggle added separately if needed
+
+  const toggle = document.createElement('span');
+  toggle.className = 'tree-toggle';
+  toggle.textContent = ''; // filled in if has children
+
+  const nameEl = document.createElement('span');
+  nameEl.className = 'tree-name';
+  nameEl.textContent = name;
+  nameEl.title = name;
+
+  const countEl = document.createElement('span');
+  countEl.className = 'tree-count';
+  countEl.textContent = count;
+
+  row.appendChild(toggle);
+  row.appendChild(nameEl);
+  row.appendChild(countEl);
+  container.appendChild(row);
+
+  if (path) rowByPath[path] = row;
+
+  row.addEventListener('click', () => {
+    if (selectedRow) selectedRow.classList.remove('selected');
+    row.classList.add('selected');
+    selectedRow = row;
+    selectedCls = path;
+    doSearch();
+  });
+
+  return row;
+}
+
+function expandToRow(row) {
+  let node = row.parentElement; // .tree-node
+  while (node) {
+    const parent = node.parentElement;
+    if (parent && parent.classList.contains('tree-children')) {
+      parent.classList.add('open');
+      const parentNode = parent.parentElement; // .tree-node
+      if (parentNode) {
+        const toggle = parentNode.querySelector(':scope > .tree-row .tree-toggle');
+        if (toggle && toggle.textContent) toggle.textContent = '▾';
+      }
+      node = parentNode;
+    } else {
+      break;
+    }
+  }
+}
+
+function selectByPath(path) {
+  const row = rowByPath[path];
+  if (!row) return;
+  if (selectedRow) selectedRow.classList.remove('selected');
+  row.classList.add('selected');
+  selectedRow = row;
+  selectedCls = path;
+  expandToRow(row);
+  row.scrollIntoView({block: 'nearest', behavior: 'smooth'});
+  doSearch();
+}
+
+// ── 目录树筛选 ────────────────────────────────────────────────────────────────
+
+const treeFilter = document.getElementById('tree-filter');
+treeFilter.addEventListener('input', () => {
+  const q = treeFilter.value.trim().toLowerCase();
+  filterTree(treeContainer, q);
+});
+
+function filterTree(container, q) {
+  if (!q) {
+    // 清除筛选：恢复原始状态
+    container.querySelectorAll('.tree-node').forEach(node => {
+      node.style.display = '';
+    });
+    container.querySelectorAll('.tree-children').forEach(el => {
+      el.classList.remove('open');
+    });
+    container.querySelectorAll('.tree-toggle').forEach(el => {
+      if (el.textContent) el.textContent = '▸';
+    });
+    return;
+  }
+
+  // 对每个 tree-node：若自身或任意后代名称匹配则显示，并展开到匹配节点
+  function processNode(nodeEl) {
+    const row = nodeEl.querySelector(':scope > .tree-row');
+    if (!row) return false;
+    const nameEl = row.querySelector('.tree-name');
+    const selfMatch = nameEl && nameEl.textContent.toLowerCase().includes(q);
+
+    const childrenEl = nodeEl.querySelector(':scope > .tree-children');
+    let childMatch = false;
+    if (childrenEl) {
+      childrenEl.querySelectorAll(':scope > .tree-node').forEach(child => {
+        if (processNode(child)) childMatch = true;
+      });
+    }
+
+    const visible = selfMatch || childMatch;
+    nodeEl.style.display = visible ? '' : 'none';
+
+    if (visible && childrenEl) {
+      childrenEl.classList.add('open');
+      const toggle = row.querySelector('.tree-toggle');
+      if (toggle && toggle.textContent) toggle.textContent = '▾';
+    }
+    return visible;
+  }
+
+  // 只处理根下的 tree-node（"全部笔记"行不是 tree-node）
+  container.querySelectorAll(':scope > .tree-node').forEach(processNode);
+}
+
+// ── 搜索 ──────────────────────────────────────────────────────────────────────
+
+input.addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(doSearch, 90);
+});
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function highlight(text, tokens) {
+  if (!tokens.length) return esc(text);
+  const pats = tokens.map(t => t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'));
+  return esc(text).replace(new RegExp('('+pats.join('|')+')', 'gi'), '<mark>$1</mark>');
+}
+
+async function doSearch() {
+  const q = input.value.trim();
+  let url = '/api/search?limit=100';
+  if (q) url += '&q=' + encodeURIComponent(q);
+  if (selectedCls) url += '&cls=' + encodeURIComponent(selectedCls);
+
+  const data = await fetch(url).then(r => r.json());
+  const tokens = q ? (q.toLowerCase().match(/[\w一-鿿぀-ヿ＀-￯]+/g) || []) : [];
+
+  if (data.total === 0) {
+    status.textContent = q ? '无结果' : '此分类下无笔记';
+    results.innerHTML = '';
+    return;
+  }
+
+  const label = selectedCls
+    ? `${data.total} 篇` + (q ? ` · 搜索"${q}"` : '')
+    : (q ? `${data.total} 条结果` : `${data.count} 篇笔记`);
+  status.textContent = label + (data.total > 100 ? '（显示前 100 条）' : '');
+
+  results.innerHTML = data.results.map(e => `
+    <li data-path="${e.path}">
+      <a href="${e.path}" target="_blank">${highlight(e.title, tokens)}</a>
+      <span class="row-actions">
+        <a class="edit-btn" href="/edit/${e.path.split('/').pop()}" title="编辑">✎</a>
+        <button class="del-btn" title="删除笔记">✕</button>
+      </span>
+      ${e.crumb.length ? `<div class="crumb">${e.crumb.map((seg, i) =>
+        `<span class="crumb-link" data-cls="${esc(e.crumb.slice(0,i+1).join('/'))}">${esc(seg)}</span>`
+      ).join(' / ')}</div>` : ''}
+      ${e.snippet ? `<div class="snippet">${highlight(e.snippet, tokens)}</div>` : ''}
+    </li>`).join('');
+
+  results.querySelectorAll('.crumb-link').forEach(span => {
+    span.addEventListener('click', () => selectByPath(span.dataset.cls));
+  });
+
+  results.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.preventDefault();
+      const li = btn.closest('li');
+      const notePath = li.dataset.path;
+      const filename = notePath.split('/').pop();
+      if (!confirm(`删除笔记？\n${filename}`)) return;
+      const res = await fetch(`/api/notes/${encodeURIComponent(filename)}`, {method: 'DELETE'});
+      const data = await res.json();
+      if (data.ok) {
+        li.remove();
+        totalCount = data.count;
+        status.textContent = status.textContent.replace(/\d+ 篇笔记/, data.count + ' 篇笔记');
+        // Refresh tree counts
+        fetch('/api/tree').then(r => r.json()).then(tree => {
+          treeContainer.innerHTML = '';
+          renderTree(tree, treeContainer, 0);
+        });
+      } else {
+        alert('删除失败：' + (data.error || '未知错误'));
+      }
+    });
+  });
+}
+</script>
+</body>
+</html>
