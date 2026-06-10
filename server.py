@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-_ICLOUD_KB = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/workspace/knowledge"
-KNOWLEDGE_BASE = Path(os.environ.get("KNOWLEDGE_BASE_PATH", str(_ICLOUD_KB)))
 NOTES_DIR  = BASE_DIR / "notes-html"
 ASSETS_DIR = BASE_DIR / "assets"
 INDEX_PATH = ASSETS_DIR / "search-index.json"
@@ -23,6 +23,20 @@ DEFAULT_PORT = int(os.environ.get("PORT", "8024"))
 
 INDEX: list[dict] = []
 _TREE: dict = {}
+
+
+def ensure_notes_html() -> None:
+    """notes-html/ and assets/search-index.json are gitignored build
+    artifacts. On a fresh checkout (neither exists yet), regenerate them
+    from notes/ and chats/ via the converters before serving."""
+    if NOTES_DIR.is_dir() and any(NOTES_DIR.iterdir()):
+        return
+    print("notes-html/ not found — regenerating from notes/ and chats/ (this may take a while)...")
+    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    if not INDEX_PATH.is_file():
+        INDEX_PATH.write_text("[]", encoding="utf-8")
+    for script in ("notes_to_html.py", "chats_to_html.py"):
+        subprocess.run([sys.executable, str(BASE_DIR / script)], cwd=BASE_DIR, check=True)
 
 
 def load_index() -> None:
@@ -320,6 +334,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    ensure_notes_html()
     load_index()
     server = ThreadingHTTPServer((HOST, DEFAULT_PORT), Handler)
     print(f"笔记管理器运行在 http://{HOST}:{DEFAULT_PORT}")
