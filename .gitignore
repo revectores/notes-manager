@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+logs/
+.DS_Store
+
+# Generated search index (regenerated from notes-html on every sync)
+assets/search-index.json
+assets/search-index.json.bak
+
+# Generated HTML views (regenerated from ../knowledge/notes and chats)
+notes-html/

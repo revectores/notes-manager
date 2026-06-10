@@ -89,13 +89,12 @@
       display:flex;gap:4px;opacity:0;transition:opacity .1s;
     }
     #results li:hover .row-actions{opacity:1}
-    .del-btn,.edit-btn{
+    .del-btn{
       background:none;border:none;cursor:pointer;
       font-size:.82rem;color:#ccc;padding:0 2px;line-height:1;
       text-decoration:none;
     }
     .del-btn:hover{color:#cc3333}
-    .edit-btn:hover{color:#0066cc}
 
     @media(max-width:600px){
       #tree-panel{display:none}
@@ -362,7 +361,6 @@ async function doSearch() {
     <li data-path="${e.path}">
       <a href="${e.path}" target="_blank">${highlight(e.title, tokens)}</a>
       <span class="row-actions">
-        <a class="edit-btn" href="/edit/${e.path.split('/').pop()}" title="编辑">✎</a>
         <button class="del-btn" title="删除笔记">✕</button>
       </span>
       ${e.crumb.length ? `<div class="crumb">${e.crumb.map((seg, i) =>

@@ -1,0 +1,269 @@
+#!/usr/bin/env python3
+"""Convert notes/**/*.md to flat notes-html/*.html via pandoc.
+
+Usage:
+    python3 notes_to_html.py [notes_dir] [--output notes_html_dir]
+
+For each notes/<category>/.../<name>.md, runs pandoc with the math
+extensions and MathJax config (matching chats_to_html.py), strips
+pandoc's auto title-block header, sets <title> from the file's first
+heading line (any level), and tags the page with
+<meta name="classification" content="<category>/...">, where the
+classification is the .md file's directory path relative to notes/.
+
+Output is FLAT: notes/a/b/c/name.md -> notes-html/name.html. The notes/
+directory path becomes the search-index "crumb" instead of a nested
+output path.
+
+Headings after the first (the page title) are renumbered as 1, 2, ...
+/ 1.1, 1.2, ... / 1.1.1, ... based on their relative nesting, regardless
+of their original <hN> level.
+
+Every notes/**/*.html file is treated as hand-crafted: it is copied
+as-is to notes-html/<name>.html with the classification meta tag
+inserted (no pandoc, no renumbering). A .md file with a same-name
+.html sibling is ignored (the .html wins).
+
+After conversion, also updates assets/search-index.json for the files
+just converted (and pings the running server's /api/reload, if any), so
+the search index stays in sync without a separate manual step.
+"""
+
+from __future__ import annotations
+
+import argparse
+import html
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+from search_index import DEFAULT_OUTPUT, reload_server, update_search_index
+
+_ICLOUD_KB = (
+    Path.home()
+    / "Library/Mobile Documents/com~apple~CloudDocs/workspace/knowledge"
+)
+DEFAULT_NOTES = _ICLOUD_KB / "notes"
+MATHJAX_CONFIG = Path(__file__).resolve().parent / "assets/mathjax-config.html"
+
+_TITLE_RE = re.compile(r"^#{1,6}\s+(.+?)\s*$", re.M)
+_TITLE_BLOCK_RE = re.compile(r'<header id="title-block-header">.*?</header>\s*', re.DOTALL)
+_TITLE_TAG_RE = re.compile(r"<title>.*?</title>")
+_BODY_RE = re.compile(r"(<body>\n)(.*)(\n</body>)", re.DOTALL)
+_COLGROUP_RE = re.compile(r"<colgroup>.*?</colgroup>\n", re.DOTALL)
+_HEADING_RE = re.compile(r"(<h([1-6])\b[^>]*>)(.*?)(</h\2>)", re.DOTALL)
+# Strip a pre-existing outline number ("1. ", "1.1 ", "4.3.2 ", ...) so it can
+# be replaced by the freshly computed one. Requires a literal "." (either
+# between digit groups or trailing a single number) so plain leading numbers
+# that are part of the title itself (e.g. "200 OK", "0-1 Knapsack Problem")
+# are left untouched.
+_LEADING_NUM_RE = re.compile(r"^(?:\d+(?:\.\d+)+\.?|\d+\.)\s+")
+# A trailing "<hr/>" + "<a id=\"refN\"></a>[N] [title](url)" reference list
+# (the raw-HTML convention used in note markdown) renders as a run of
+# "<p><a id=\"refN\"></a>[N] <a href=...>title</a></p>" paragraphs after the
+# <hr/>. Rewrite these into the "<div class=\"references\"><p id=\"refN\">..."
+# style used by hand-crafted notes (see llm-memory-benchmark.html).
+_REFERENCES_BLOCK_RE = re.compile(
+    r"<hr\s*/?>\n((?:<p><a id=\"ref\d+\"></a>\[\d+\].*?</p>\n?)+)", re.DOTALL
+)
+_REF_ITEM_RE = re.compile(r'<p><a id="(ref\d+)"></a>(\[\d+\].*?)</p>', re.DOTALL)
+
+
+# ── heading renumbering ─────────────────────────────────────────────────────
+
+
+def renumber_headings(body: str) -> str:
+    """Number headings 1, 2.. / 1.1, 1.2.. / 1.1.1.. by relative nesting,
+    leaving the first heading (the page title) unnumbered."""
+    matches = list(_HEADING_RE.finditer(body))
+    if len(matches) <= 1:
+        return body
+
+    stack: list[list[int]] = []
+    numbers: dict[int, str] = {}
+    for i, m in enumerate(matches):
+        if i == 0:
+            continue
+        level = int(m.group(2))
+        while stack and stack[-1][0] > level:
+            stack.pop()
+        if stack and stack[-1][0] == level:
+            stack[-1][1] += 1
+        else:
+            stack.append([level, 1])
+        numbers[i] = ".".join(str(c) for _, c in stack)
+
+    out: list[str] = []
+    last_end = 0
+    for i, m in enumerate(matches):
+        out.append(body[last_end : m.start()])
+        if i in numbers:
+            content = _LEADING_NUM_RE.sub("", m.group(3), count=1)
+            out.append(f"{m.group(1)}{numbers[i]} {content}{m.group(4)}")
+        else:
+            out.append(m.group(0))
+        last_end = m.end()
+    out.append(body[last_end:])
+    return "".join(out)
+
+
+# ── reference list restyling ────────────────────────────────────────────────
+
+
+def restyle_references(body: str) -> str:
+    """Rewrite a trailing <hr/> + <a id="refN"></a>[N] ... reference list
+    into <div class="references"><p id="refN">[N] ...</p>...</div>."""
+
+    def _block_sub(m: re.Match) -> str:
+        items = _REF_ITEM_RE.sub(
+            lambda im: f' <p id="{im.group(1)}">{im.group(2)}</p>', m.group(1)
+        )
+        return f'<div class="references">\n{items.rstrip(chr(10))}\n</div>\n'
+
+    return _REFERENCES_BLOCK_RE.sub(_block_sub, body)
+
+
+# ── conversion ───────────────────────────────────────────────────────────────
+
+
+def _insert_classification(out_html: str, classification: str) -> str:
+    tag = f'<meta name="classification" content="{html.escape(classification)}" />'
+    return out_html.replace("<head>", f"<head>\n  {tag}", 1)
+
+
+def convert_note(md_path: Path, out_path: Path, classification: str) -> None:
+    text = md_path.read_text(encoding="utf-8")
+    m = _TITLE_RE.search(text)
+    title = m.group(1).strip() if m else md_path.stem
+
+    result = subprocess.run(
+        [
+            "pandoc", str(md_path),
+            "-f", "markdown+tex_math_single_backslash+tex_math_dollars",
+            "-o", "-",
+            "--standalone",
+            "--css", "/assets/style.css",
+            "--mathjax",
+            "-H", str(MATHJAX_CONFIG),
+            "--metadata", f"title={md_path.stem}",
+        ],
+        capture_output=True, text=True, encoding="utf-8", check=True,
+    )
+
+    out_html = _TITLE_BLOCK_RE.sub("", result.stdout)
+    out_html = _COLGROUP_RE.sub("", out_html)
+    title_tag = f"<title>{html.escape(title)}</title>"
+    out_html = _TITLE_TAG_RE.sub(lambda _m: title_tag, out_html, count=1)
+    out_html = _insert_classification(out_html, classification)
+
+    body_m = _BODY_RE.search(out_html)
+    if body_m:
+        body = renumber_headings(body_m.group(2))
+        body = restyle_references(body)
+        out_html = (
+            out_html[: body_m.start()]
+            + body_m.group(1) + body + body_m.group(3)
+            + out_html[body_m.end() :]
+        )
+
+    out_path.write_text(out_html, encoding="utf-8")
+
+
+def copy_handcrafted(html_path: Path, out_path: Path, classification: str) -> None:
+    out_html = html_path.read_text(encoding="utf-8")
+    out_html = _insert_classification(out_html, classification)
+    out_path.write_text(out_html, encoding="utf-8")
+
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "notes_dir",
+        nargs="?",
+        default=str(DEFAULT_NOTES),
+        help="Directory of notes/**/*.md files",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        default=str(DEFAULT_OUTPUT),
+        help="Output directory for .html files",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List files without converting",
+    )
+    parser.add_argument(
+        "--no-index",
+        action="store_true",
+        help="Skip updating assets/search-index.json and reloading the server",
+    )
+    args = parser.parse_args()
+
+    notes_dir = Path(args.notes_dir)
+    out_dir = Path(args.output)
+    if not notes_dir.is_dir():
+        sys.exit(f"Notes directory not found: {notes_dir}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    html_files = sorted(notes_dir.glob("**/*.html"))
+    md_files = sorted(
+        p for p in notes_dir.glob("**/*.md") if not p.with_suffix(".html").is_file()
+    )
+    print(f"Found {len(md_files)} markdown file(s), {len(html_files)} hand-crafted html file(s)")
+    print(f"Output directory: {out_dir}")
+
+    converted = copied = errors = 0
+    converted_paths: list[Path] = []
+    crumb_map: dict[Path, list[str]] = {}
+
+    for md_path in md_files:
+        rel = md_path.relative_to(notes_dir)
+        crumb = list(rel.parent.parts)
+        classification = "/".join(crumb)
+        out_path = out_dir / f"{md_path.stem}.html"
+
+        if args.dry_run:
+            print(f"  [pandoc] {rel} -> {out_path.name}  [{classification}]")
+            continue
+
+        try:
+            convert_note(md_path, out_path, classification)
+            converted += 1
+            converted_paths.append(out_path)
+            crumb_map[out_path] = crumb
+        except subprocess.CalledProcessError as e:
+            errors += 1
+            print(f"  ERROR {md_path.name}: {e.stderr.strip()[:200]}")
+
+    for html_path in html_files:
+        rel = html_path.relative_to(notes_dir)
+        crumb = list(rel.parent.parts)
+        classification = "/".join(crumb)
+        out_path = out_dir / f"{html_path.stem}.html"
+
+        if args.dry_run:
+            print(f"  [copy]   {rel} -> {out_path.name}  [{classification}]")
+            continue
+
+        copy_handcrafted(html_path, out_path, classification)
+        copied += 1
+        converted_paths.append(out_path)
+        crumb_map[out_path] = crumb
+
+    print(f"\nConverted: {converted}  Copied (hand-crafted): {copied}  Errors: {errors}  Total: {len(md_files) + len(html_files)}")
+
+    if not args.dry_run and not args.no_index:
+        updated, added = update_search_index(converted_paths, out_dir, crumb_map=crumb_map)
+        if updated or added:
+            print(f"Search index: updated {updated}, added {added}")
+            print("Server reloaded" if reload_server() else "Server not running, skipped reload")
+
+
+if __name__ == "__main__":
+    main()
