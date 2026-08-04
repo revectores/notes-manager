@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Install and start the com.rex.notes-watch LaunchAgent for this checkout.
+# Install and start every LaunchAgent defined in launchd/*.plist for this checkout.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PLIST="$HOME/Library/LaunchAgents/com.rex.notes-watch.plist"
 
 mkdir -p "$REPO_DIR/logs"
 
-sed "s|__REPO_DIR__|$REPO_DIR|g" "$REPO_DIR/launchd/com.rex.notes-watch.plist" > "$PLIST"
+for src in "$REPO_DIR"/launchd/*.plist; do
+    label="$(basename "$src" .plist)"
+    plist="$HOME/Library/LaunchAgents/$label.plist"
 
-launchctl unload "$PLIST" 2>/dev/null || true
-launchctl load -w "$PLIST"
+    sed "s|__REPO_DIR__|$REPO_DIR|g" "$src" > "$plist"
 
-echo "Installed and started com.rex.notes-watch (watching $REPO_DIR)"
-echo "Logs: $REPO_DIR/logs/notes-watch.log"
+    launchctl unload "$plist" 2>/dev/null || true
+    launchctl load -w "$plist"
+
+    echo "Installed and started $label"
+done
+
+echo "Logs: $REPO_DIR/logs/"

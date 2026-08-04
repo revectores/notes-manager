@@ -236,8 +236,9 @@ def build_rewrite_prompt(chat: ChatExport, note_title: str | None = None) -> str
         "If source references are present, preserve them as numbered citations. "
         "Inline citations must be superscript intra-page links in exactly this form: "
         '<sup><a href="#ref1">[1]</a></sup>. '
-        "The References section must use matching anchors and Markdown links in exactly this form: "
+        "End the note with a `<hr/>` followed by matching anchors and Markdown links in exactly this form: "
         '<a id="ref1"></a>[1] [Source Name](https://example.com). '
+        "Do not add a 'References' heading; the `<hr/>` separator is the only marker for this section. "
         "Renumber citations sequentially if needed, and cite specific factual claims rather than only listing sources."
     )
 

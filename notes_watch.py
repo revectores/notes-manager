@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Watch notes/**/*.md, notes/**/*.html, and chats/*.md and keep
-notes-html/ in sync.
+"""Watch notes/**/*.md and notes/**/*.html and keep notes-html/ in sync.
 
 Usage:
-    python3 notes_watch.py [--notes-dir DIR] [--chats-dir DIR]
+    python3 notes_watch.py [--notes-dir DIR]
                             [--output notes_html_dir] [--interval seconds]
 
-Polls notes/**/*.md, notes/**/*.html, and chats/*.md every --interval
-seconds (default 5). For each file that is new, modified, or removed
-since the last scan, re-runs the matching conversion
-(notes_to_html.convert_note for .md, notes_to_html.copy_handcrafted for
-hand-crafted .html, or chats_to_html.convert_file for chats), then
+Polls notes/**/*.md and notes/**/*.html every --interval seconds
+(default 5). For each file that is new, modified, or removed since the
+last scan, re-runs the matching conversion (notes_to_html.convert_note
+for .md, notes_to_html.copy_handcrafted for hand-crafted .html), then
 updates assets/search-index.json and pings the running server's
 /api/reload.
 
@@ -35,7 +33,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from chats_to_html import DEFAULT_CHATS, convert_file
 from notes_to_html import DEFAULT_NOTES, convert_note, copy_handcrafted
 from search_index import (
     DEFAULT_OUTPUT,
@@ -76,11 +73,7 @@ def _notes_html_convert(html_path: Path, out_path: Path, crumb: list[str]) -> No
     copy_handcrafted(html_path, out_path, "/".join(crumb))
 
 
-def _chat_convert(md_path: Path, out_path: Path, crumb: list[str]) -> None:
-    convert_file(md_path, out_path)
-
-
-def make_sources(notes_dir: Path, chats_dir: Path) -> list[Source]:
+def make_sources(notes_dir: Path) -> list[Source]:
     sources = []
     if notes_dir.is_dir():
         notes_crumb_fn = lambda p, root=notes_dir: list(p.relative_to(root).parent.parts)
@@ -102,17 +95,6 @@ def make_sources(notes_dir: Path, chats_dir: Path) -> list[Source]:
                 skip_if_sibling=None,
                 crumb_fn=notes_crumb_fn,
                 convert=_notes_html_convert,
-            )
-        )
-    if chats_dir.is_dir():
-        sources.append(
-            Source(
-                name="chats",
-                root=chats_dir,
-                pattern="*.md",
-                skip_if_sibling=None,
-                crumb_fn=lambda p: ["chats"],
-                convert=_chat_convert,
             )
         )
     return sources
@@ -177,11 +159,6 @@ def main() -> None:
         help="Directory of notes/**/*.md and notes/**/*.html files",
     )
     parser.add_argument(
-        "--chats-dir",
-        default=str(DEFAULT_CHATS),
-        help="Directory of chats/*.md files",
-    )
-    parser.add_argument(
         "--output",
         "-o",
         default=str(DEFAULT_OUTPUT),
@@ -196,13 +173,12 @@ def main() -> None:
     args = parser.parse_args()
 
     notes_dir = Path(args.notes_dir)
-    chats_dir = Path(args.chats_dir)
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    sources = make_sources(notes_dir, chats_dir)
+    sources = make_sources(notes_dir)
     if not sources:
-        sys.exit(f"Neither notes dir ({notes_dir}) nor chats dir ({chats_dir}) found")
+        sys.exit(f"Notes dir not found: {notes_dir}")
 
     states: dict[str, State] = {}
     startup = SyncResult()

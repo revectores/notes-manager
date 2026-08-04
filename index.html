@@ -12,7 +12,7 @@
       display:flex;height:100vh;overflow:hidden;
     }
 
-    /* ── 左侧目录树 ── */
+    /* ── Left directory tree ── */
     #tree-panel{
       width:300px;min-width:300px;
       border-right:1px solid #e8e8e8;
@@ -36,6 +36,14 @@
     }
     #tree-filter:focus{outline:none;border-color:#0066cc;box-shadow:0 0 0 2px #cce0ff40}
     #tree-filter::placeholder{color:#ccc}
+    #category-filter{display:flex;gap:4px;margin-top:.35rem}
+    .cat-btn{
+      flex:1;font-size:.72rem;padding:.22rem .3rem;
+      border:1px solid #ddd;border-radius:3px;
+      background:#fff;color:#888;cursor:pointer;font-family:inherit;
+    }
+    .cat-btn:hover{border-color:#bbb;color:#555}
+    .cat-btn.active{background:#e3eeff;border-color:#cce0ff;color:#0055cc}
     #tree-scroll{flex:1;overflow-y:auto;padding:.4rem 0}
     .tree-node{user-select:none}
     .tree-row{
@@ -57,7 +65,7 @@
     .tree-children{display:none}
     .tree-children.open{display:block}
 
-    /* ── 右侧主面板 ── */
+    /* ── Right main panel ── */
     #main-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:1rem 1.2rem}
     #main-top{display:flex;align-items:baseline;gap:.8rem;margin-bottom:.6rem;flex-shrink:0}
     h1{font-size:1.2rem;font-weight:600;border-bottom:none;white-space:nowrap}
@@ -79,10 +87,21 @@
     #results li:hover .del-btn{opacity:1}
     #results a{font-size:.92rem;font-weight:500;color:#0066cc;text-decoration:none}
     #results a:hover{text-decoration:underline}
+    .cat-badge{
+      font-size:.68rem;color:#999;background:#f3f3f3;
+      border-radius:3px;padding:0 5px;margin-left:6px;
+      vertical-align:middle;white-space:nowrap;
+    }
+    .cat-badge.cat-paper{color:#a8720a;background:#fff4e0}
+    .cat-badge.cat-note{color:#5566aa;background:#eef0fa}
     .crumb{font-size:.72rem;color:#bbb;margin:.1rem 0 .2rem}
     .crumb-link{cursor:pointer}
     .crumb-link:hover{color:#0066cc;text-decoration:underline}
     .snippet{font-size:.82rem;color:#666;line-height:1.5}
+    .lang-links{display:inline-flex;gap:3px;margin-left:5px;vertical-align:middle}
+    .lang-link{font-size:.68rem;color:#888;background:#f3f3f3;border-radius:3px;
+      padding:0 5px;text-decoration:none;white-space:nowrap}
+    .lang-link:hover{color:#0066cc;background:#e3eeff}
     mark{background:#fff3b0;color:inherit;border-radius:2px;padding:0 1px}
     .row-actions{
       position:absolute;top:.55rem;right:0;
@@ -107,6 +126,11 @@
   <div id="tree-header">
     <div id="tree-header-label">目录</div>
     <input id="tree-filter" type="text" placeholder="筛选分类…" autocomplete="off" spellcheck="false">
+    <div id="category-filter">
+      <button class="cat-btn active" data-cat="">全部</button>
+      <button class="cat-btn" data-cat="paper">📄 论文</button>
+      <button class="cat-btn" data-cat="note">📝 笔记</button>
+    </div>
   </div>
   <div id="tree-scroll">
     <div id="tree-container"></div>
@@ -130,10 +154,10 @@ const results   = document.getElementById('results');
 const reloadBtn = document.getElementById('reload-btn');
 const treeContainer = document.getElementById('tree-container');
 
-let timer, totalCount = 0, selectedCls = '', selectedRow = null;
+let timer, totalCount = 0, selectedCls = '', selectedCategory = '', selectedRow = null;
 const rowByPath = {};
 
-// ── 初始化 ────────────────────────────────────────────────────────────────────
+// ── Initialization ────────────────────────────────────────────────────────────────────
 
 Promise.all([
   fetch('/api/search').then(r => r.json()),
@@ -147,7 +171,7 @@ Promise.all([
   treeContainer.textContent = '加载失败';
 });
 
-// ── 重载 ──────────────────────────────────────────────────────────────────────
+// ── Reload ──────────────────────────────────────────────────────────────────────
 
 reloadBtn.addEventListener('click', () => {
   reloadBtn.textContent = '↻ …';
@@ -163,10 +187,10 @@ reloadBtn.addEventListener('click', () => {
   });
 });
 
-// ── 目录树渲染 ────────────────────────────────────────────────────────────────
+// ── Directory tree rendering ────────────────────────────────────────────────────────────────
 
 function renderTree(node, container, depth) {
-  // 根节点特殊处理：显示为"全部笔记"
+  // Special handling for the root node: display it as "全部笔记"
   if (depth === 0) {
     const allRow = makeRow('全部笔记', '', node.count, container, depth);
     allRow.classList.add('selected');
@@ -267,7 +291,18 @@ function selectByPath(path) {
   doSearch();
 }
 
-// ── 目录树筛选 ────────────────────────────────────────────────────────────────
+// ── Category filter ──────────────────────────────────────────────────────────────────
+
+document.querySelectorAll('.cat-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedCategory = btn.dataset.cat;
+    doSearch();
+  });
+});
+
+// ── Directory tree filter ────────────────────────────────────────────────────────────────
 
 const treeFilter = document.getElementById('tree-filter');
 treeFilter.addEventListener('input', () => {
@@ -277,7 +312,7 @@ treeFilter.addEventListener('input', () => {
 
 function filterTree(container, q) {
   if (!q) {
-    // 清除筛选：恢复原始状态
+    // Clear the filter: restore the original state
     container.querySelectorAll('.tree-node').forEach(node => {
       node.style.display = '';
     });
@@ -290,7 +325,7 @@ function filterTree(container, q) {
     return;
   }
 
-  // 对每个 tree-node：若自身或任意后代名称匹配则显示，并展开到匹配节点
+  // For each tree-node: show it if its own name or any descendant name matches, and expand to the matching node
   function processNode(nodeEl) {
     const row = nodeEl.querySelector(':scope > .tree-row');
     if (!row) return false;
@@ -316,11 +351,11 @@ function filterTree(container, q) {
     return visible;
   }
 
-  // 只处理根下的 tree-node（"全部笔记"行不是 tree-node）
+  // Only process tree-nodes directly under the root (the "全部笔记" row is not a tree-node)
   container.querySelectorAll(':scope > .tree-node').forEach(processNode);
 }
 
-// ── 搜索 ──────────────────────────────────────────────────────────────────────
+// ── Search ──────────────────────────────────────────────────────────────────────
 
 input.addEventListener('input', () => {
   clearTimeout(timer);
@@ -337,11 +372,14 @@ function highlight(text, tokens) {
   return esc(text).replace(new RegExp('('+pats.join('|')+')', 'gi'), '<mark>$1</mark>');
 }
 
+const RESULT_LIMIT = 10000;
+
 async function doSearch() {
   const q = input.value.trim();
-  let url = '/api/search?limit=100';
+  let url = '/api/search?limit=' + RESULT_LIMIT;
   if (q) url += '&q=' + encodeURIComponent(q);
   if (selectedCls) url += '&cls=' + encodeURIComponent(selectedCls);
+  if (selectedCategory) url += '&cat=' + encodeURIComponent(selectedCategory);
 
   const data = await fetch(url).then(r => r.json());
   const tokens = q ? (q.toLowerCase().match(/[\w一-鿿぀-ヿ＀-￯]+/g) || []) : [];
@@ -352,14 +390,25 @@ async function doSearch() {
     return;
   }
 
-  const label = selectedCls
+  const label = (selectedCls || selectedCategory)
     ? `${data.total} 篇` + (q ? ` · 搜索"${q}"` : '')
     : (q ? `${data.total} 条结果` : `${data.count} 篇笔记`);
-  status.textContent = label + (data.total > 100 ? '（显示前 100 条）' : '');
+  status.textContent = label + (data.total > RESULT_LIMIT ? `（显示前 ${RESULT_LIMIT} 条）` : '');
 
-  results.innerHTML = data.results.map(e => `
+  const catLabel = {paper: '📄 论文', note: '📝 笔记'};
+
+  results.innerHTML = data.results.map(e => {
+    const langLinks = e.langs
+      ? Object.entries(e.langs)
+          .filter(([, p]) => p !== e.path)
+          .map(([l, p]) => `<a class="lang-link" href="${p}">${esc(l)}</a>`)
+          .join('')
+      : '';
+    return `
     <li data-path="${e.path}">
       <a href="${e.path}" target="_blank">${highlight(e.title, tokens)}</a>
+      ${e.category && catLabel[e.category] ? `<span class="cat-badge cat-${e.category}">${catLabel[e.category]}</span>` : ''}
+      ${langLinks ? `<span class="lang-links">${langLinks}</span>` : ''}
       <span class="row-actions">
         <button class="del-btn" title="删除笔记">✕</button>
       </span>
@@ -367,7 +416,8 @@ async function doSearch() {
         `<span class="crumb-link" data-cls="${esc(e.crumb.slice(0,i+1).join('/'))}">${esc(seg)}</span>`
       ).join(' / ')}</div>` : ''}
       ${e.snippet ? `<div class="snippet">${highlight(e.snippet, tokens)}</div>` : ''}
-    </li>`).join('');
+    </li>`;
+  }).join('');
 
   results.querySelectorAll('.crumb-link').forEach(span => {
     span.addEventListener('click', () => selectByPath(span.dataset.cls));
