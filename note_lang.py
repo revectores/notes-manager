@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Shared helpers for multi-language notes.
 
-A multi-language note is a group of sibling files that share a base name and
-differ only by a trailing "-<lang>" suffix, e.g. "transformer-en.md" and
-"transformer-cn.md". These convert to flat "notes-html/transformer-en.html"
-and "notes-html/transformer-cn.html" as usual, but are treated as ONE entry
-in assets/search-index.json (via its "langs" map) and get a language switcher
-on the page (see server.py's inject_toc).
+A multi-language note is a group of sibling files in the store that share a
+base name and differ only by a trailing "-<lang>" suffix, e.g.
+"transformer-en.html" and "transformer-cn.html". They are served separately
+but treated as ONE search-index entry (via its "langs" map, see
+note_index.build_index) and get a language switcher on the page (see
+server.py's inject_toc).
 """
 
 from __future__ import annotations

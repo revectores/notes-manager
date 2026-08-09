@@ -4,23 +4,33 @@ import html
 import json
 import os
 import re
-import subprocess
-import sys
+import threading
+import time
 import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from note_lang import LANG_PRIORITY, lang_label, pick_default_lang
-from update_chat_index import extract_title_body
+from note_index import URL_PREFIX, build_index, snapshot
+from note_lang import LANG_PRIORITY, lang_label
 
-BASE_DIR = Path(__file__).resolve().parent
-NOTES_DIR  = BASE_DIR / "notes-html"
+BASE_DIR   = Path(__file__).resolve().parent
 ASSETS_DIR = BASE_DIR / "assets"
-INDEX_PATH = ASSETS_DIR / "search-index.json"
+
+# The notes themselves are HTML files in a store outside this repo, synced by
+# iCloud like every other app's data. They are the source of truth: nothing is
+# generated from them and nothing generates them.
+_DEFAULT_STORE = (
+    Path.home()
+    / "Library/Mobile Documents/com~apple~CloudDocs/database/knowledge-manager/notes"
+)
+NOTES_DIR = Path(os.environ.get("KNOWLEDGE_HTML_PATH") or _DEFAULT_STORE).expanduser()
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = int(os.environ.get("PORT", "8024"))
+# The store syncs from other devices, so poll it for edits made elsewhere.
+WATCH_INTERVAL = float(os.environ.get("KNOWLEDGE_WATCH_INTERVAL", "5"))
+AUTO_WATCH = os.environ.get("KNOWLEDGE_AUTO_WATCH", "1") != "0"
 
 
 # ── Search engine ──────────────────────────────────────────────────────────────────
@@ -30,6 +40,8 @@ _TREE: dict = {}
 _BY_PATH: dict[str, dict] = {}
 _MTIMES: dict[str, float] = {}
 _BACKLINKS: dict[str, list[str]] = {}
+_SNAPSHOT: dict[str, float] = {}
+_WRITE_LOCK = threading.Lock()
 
 
 def build_by_path(entries: list[dict]) -> dict[str, dict]:
@@ -56,41 +68,39 @@ def build_backlinks(entries: list[dict]) -> dict[str, list[str]]:
     return bl
 
 
-def ensure_notes_html() -> None:
-    """notes-html/ and assets/search-index.json are gitignored build
-    artifacts. On a fresh checkout (neither exists yet), regenerate them
-    from notes/ via the converter before serving."""
-    if NOTES_DIR.is_dir() and any(NOTES_DIR.iterdir()):
-        return
-    print("notes-html/ not found — regenerating from notes/ (this may take a while)...")
-    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
-    if not INDEX_PATH.is_file():
-        INDEX_PATH.write_text("[]", encoding="utf-8")
-    subprocess.run([sys.executable, str(BASE_DIR / "notes_to_html.py")], cwd=BASE_DIR, check=True)
-
-
-def _entry_mtime(entry: dict) -> float:
-    """Newest mtime among an entry's generated notes-html/*.html file(s),
-    used to sort the browse view (no search query) by last-updated."""
+def _entry_mtime(entry: dict, snap: dict[str, float]) -> float:
+    """Newest mtime among an entry's stored file(s), used to sort the browse
+    view (no search query) by last-updated."""
     paths = entry["langs"].values() if entry.get("langs") else [entry["path"]]
-    mtimes = []
-    for p in paths:
+    return max((snap.get(Path(p).name, 0.0) for p in paths), default=0.0)
+
+
+def reload_index() -> None:
+    """Re-read every note in the store. Cheap enough (a few hundred files) that
+    any edit anywhere just rebuilds the lot."""
+    global INDEX, _TREE, _BY_PATH, _MTIMES, _BACKLINKS, _SNAPSHOT
+    with _WRITE_LOCK:
+        snap = snapshot(NOTES_DIR)
+        entries = build_index(NOTES_DIR)
+        INDEX = entries
+        _TREE = build_tree(entries)
+        _BY_PATH = build_by_path(entries)
+        _MTIMES = {e["path"]: _entry_mtime(e, snap) for e in entries}
+        _BACKLINKS = build_backlinks(entries)
+        _SNAPSHOT = snap
+
+
+def watch_store() -> None:
+    """Poll the store and reindex when a note is added, edited or removed —
+    by hand here, or by iCloud carrying an edit over from another device."""
+    while True:
+        time.sleep(WATCH_INTERVAL)
         try:
-            mtimes.append((NOTES_DIR / Path(p).name).stat().st_mtime)
-        except OSError:
-            pass
-    return max(mtimes, default=0.0)
-
-
-def load_index() -> None:
-    global INDEX, _TREE, _BY_PATH, _MTIMES, _BACKLINKS
-    with open(INDEX_PATH, encoding="utf-8") as f:
-        INDEX = json.load(f)
-    _TREE = build_tree(INDEX)
-    _BY_PATH = build_by_path(INDEX)
-    _MTIMES = {e["path"]: _entry_mtime(e) for e in INDEX}
-    _BACKLINKS = build_backlinks(INDEX)
-    print(f"已加载 {len(INDEX)} 条索引")
+            if snapshot(NOTES_DIR) != _SNAPSHOT:
+                reload_index()
+                print(f"笔记有变动，已重新索引 {len(INDEX)} 篇", flush=True)
+        except OSError as e:
+            print(f"扫描笔记目录失败: {e}", flush=True)
 
 
 def tokenize(text: str) -> list[str]:
@@ -137,12 +147,11 @@ def do_search(query: str, limit: int = 50, pool: list[dict] | None = None) -> tu
     scored.sort(key=lambda x: -x[0])
     results = [
         {
-            "title":    e["title"],
-            "path":     e["path"],
-            "crumb":    e.get("crumb", []),
-            "category": e.get("category"),
-            "snippet":  _snippet(e.get("body", ""), tokens),
-            "langs":    e.get("langs"),
+            "title":   e["title"],
+            "path":    e["path"],
+            "crumb":   e.get("crumb", []),
+            "snippet": _snippet(e.get("body", ""), tokens),
+            "langs":   e.get("langs"),
         }
         for _, e in scored[:limit]
     ]
@@ -185,38 +194,59 @@ def build_tree(entries: list[dict]) -> dict:
 
 _TOC_INJECT = """
 <style>
-#kb-back{position:fixed;top:.8rem;left:.9rem;font-size:.75rem;color:#bbb;
-  text-decoration:none;z-index:200;background:rgba(255,255,255,.85);
-  padding:2px 7px;border-radius:3px;border:1px solid #e5e5e5}
-#kb-back:hover{color:#333}
-#kb-backlinks{margin-top:2.5rem;padding-top:1rem;border-top:1px solid #eee;max-width:640px}
-#kb-backlinks-title{font-size:.75rem;font-weight:600;color:#aaa;
-  text-transform:uppercase;letter-spacing:.06em;margin-bottom:.4rem}
+/* Injected into a stored note, which has already loaded /assets/style.css, so
+   the palette variables are in scope — including under a dark colour scheme,
+   which is the whole reason nothing here names a colour of its own. */
+#kb-back{display:block;font-size:.78rem;color:var(--muted);
+  text-decoration:none;border:none;margin-bottom:1.4rem}
+#kb-back:hover{color:var(--accent)}
+#kb-backlinks{margin-top:2.5rem;padding-top:1rem;border-top:1px solid var(--border)}
+#kb-backlinks-title{font-size:.68rem;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.08em;margin-bottom:.5rem}
 #kb-backlinks ul{list-style:none;padding:0;margin:0}
 #kb-backlinks li{margin:.2rem 0}
-#kb-backlinks a{font-size:.86rem;color:#0066cc;text-decoration:none}
-#kb-backlinks a:hover{text-decoration:underline}
-#kb-toc{position:fixed;top:2rem;right:calc(50% + 470px);width:240px;
-  font-size:.78rem;line-height:1.55;max-height:calc(100vh - 4rem);
-  overflow-y:auto;color:#888}
-@media(max-width:1440px){#kb-toc{display:none}}
-#kb-toc-title{font-weight:600;color:#555;margin-bottom:.5rem;font-size:.72rem;
-  text-transform:uppercase;letter-spacing:.06em}
-#kb-toc a{display:block;color:#aaa;text-decoration:none;padding:1px 0;
+#kb-backlinks a{font-size:.86rem;color:var(--accent);
+  text-decoration:none;border-bottom:1px dotted var(--accent)}
+#kb-backlinks a:hover{border-bottom-style:solid}
+/* The crumb and the table of contents share one fixed rail in the left
+   gutter and stack inside it, so a deep classification path pushes the
+   contents down instead of covering it. The rail's offset is the note
+   column's own half-width plus the gap, both declared in style.css. */
+#kb-rail{position:fixed;top:1.5rem;width:var(--rail);
+  right:calc(50% + var(--column) / 2 + var(--rail-gap));
+  max-height:calc(100vh - 3rem);overflow-y:auto;z-index:150}
+#kb-crumb{font-size:.72rem;line-height:1.5;color:var(--muted);
+  margin-bottom:1.4rem;word-break:break-word}
+#kb-toc{font-size:.76rem;line-height:1.5}
+#kb-toc-title{font-size:.68rem;font-weight:700;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.08em;margin-bottom:.5rem}
+#kb-toc a{display:block;color:var(--muted);text-decoration:none;
+  border:none;padding:.1rem 0;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#kb-toc a:hover{color:#333}
-#kb-toc a.active{color:#0066cc;font-weight:500}
-#kb-lang{position:fixed;top:.8rem;right:.9rem;font-size:.75rem;
-  z-index:200;display:flex;gap:4px}
-#kb-lang a{color:#bbb;text-decoration:none;background:rgba(255,255,255,.85);
-  padding:2px 7px;border-radius:3px;border:1px solid #e5e5e5}
-#kb-lang a:hover{color:#333}
-#kb-lang a.active{color:#0066cc;font-weight:600;border-color:#cce0ff}
-#kb-category{position:fixed;top:2.5rem;left:.9rem;font-size:.75rem;color:#888;
-  z-index:200;background:rgba(255,255,255,.85);
-  padding:2px 7px;border-radius:3px;border:1px solid #e5e5e5}
+#kb-toc a:hover{color:var(--fg)}
+#kb-toc a.active{color:var(--accent);font-weight:700}
+#kb-lang{position:fixed;top:1.5rem;right:1.5rem;z-index:200;
+  display:flex;gap:.3rem;font-size:.75rem}
+#kb-lang a{color:var(--muted);text-decoration:none;background:var(--card-bg);
+  border:1px solid var(--border);border-radius:6px;padding:.2rem .6rem}
+#kb-lang a:hover{color:var(--accent);border-color:var(--accent)}
+#kb-lang a.active{color:#fff;background:var(--accent);border-color:var(--accent)}
+/* 46rem of column, 13rem of rail and 2.5rem between them need ~1264px of
+   viewport. Below that there is no gutter to hold the rail, so it collapses
+   into one strip along the top: the way back and where you are, side by side,
+   with the contents dropped. The note gets extra head room to sit under. */
+@media(max-width:1264px){
+  body{padding-top:4.2rem}
+  #kb-rail{top:1.5rem;left:1.5rem;right:auto;width:auto;
+    max-width:calc(100vw - 9rem);max-height:none;overflow:visible;
+    display:flex;align-items:center;gap:.4rem}
+  #kb-toc{display:none}
+  #kb-back,#kb-crumb{margin:0;flex-shrink:0;background:var(--card-bg);
+    border:1px solid var(--border);border-radius:6px;padding:.2rem .6rem}
+  #kb-crumb{min-width:0;flex-shrink:1;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
 </style>
-<a id="kb-back" href="/">← 知识库</a>
 <script>
 document.querySelectorAll('a:not(#kb-back)').forEach(function(a){
   var h=a.getAttribute('href')||'';
@@ -236,7 +266,7 @@ document.querySelectorAll('a:not(#kb-back)').forEach(function(a){
     return '<a href="#'+h.id+'" style="padding-left:'+indent+'px" title="'+
       h.textContent.trim()+'">'+h.textContent.trim()+'</a>';
   }).join('');
-  document.body.appendChild(nav);
+  (document.getElementById('kb-rail')||document.body).appendChild(nav);
   var io=new IntersectionObserver(function(es){
     es.forEach(function(e){
       var a=nav.querySelector('a[href="#'+e.target.id+'"]');
@@ -262,14 +292,20 @@ def render_lang_switcher(langs: dict[str, str], current_path: str) -> str:
     return f'<div id="kb-lang">{"".join(links)}</div>\n'
 
 
-_CATEGORY_LABELS = {"paper": "📄 论文", "note": "📝 笔记"}
+def render_rail(crumb: list[str]) -> str:
+    """The fixed left rail: the way back, where the note is filed, and the
+    table of contents the injected script appends below them.
 
-
-def render_category_badge(category: str | None) -> str:
-    label = _CATEGORY_LABELS.get(category or "")
-    if not label:
-        return ""
-    return f'<div id="kb-category">{label}</div>\n'
+    The back link lives in the rail rather than floating in the corner on its
+    own, because near the breakpoint the corner is where the rail itself is.
+    Always emitted, even unfiled and even for a note too short to have
+    contents, because the rail is what positions the contents.
+    """
+    parts = ['<a id="kb-back" href="/">← 知识库</a>']
+    if crumb:
+        path = html.escape(" / ".join(crumb))
+        parts.append(f'<div id="kb-crumb" title="{path}">{path}</div>')
+    return f'<div id="kb-rail">{"".join(parts)}</div>\n'
 
 
 def render_backlinks_html(srcs: list[str]) -> str:
@@ -295,10 +331,10 @@ def inject_toc(
     page_html: str,
     langs: dict[str, str] | None = None,
     current_path: str = "",
-    category: str | None = None,
+    crumb: list[str] | None = None,
     backlinks: list[str] | None = None,
 ) -> str:
-    extra = render_category_badge(category) + _TOC_INJECT
+    extra = render_rail(crumb or []) + _TOC_INJECT
     if langs and len(langs) > 1:
         extra = render_lang_switcher(langs, current_path) + extra
     if backlinks:
@@ -329,6 +365,17 @@ def _mime(path: str | Path) -> str:
     return _MIME.get(Path(path).suffix.lower(), "application/octet-stream")
 
 
+def resolve_in(root: Path, relative: str) -> Path | None:
+    """Resolve a request path inside root, or None if it escapes it. The store
+    sits outside this repo, so traversal has to be refused explicitly."""
+    try:
+        target = (root / relative).resolve()
+        target.relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    return target
+
+
 class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args) -> None:
@@ -349,12 +396,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def send_file(self, path: Path | str) -> None:
-        path = Path(path)
-        if not path.is_file():
-            self.send_response(HTTPStatus.NOT_FOUND)
-            self.end_headers()
+    def send_missing(self) -> None:
+        self.send_response(HTTPStatus.NOT_FOUND)
+        self.end_headers()
+
+    def send_file(self, path: Path | str | None) -> None:
+        if path is None or not Path(path).is_file():
+            self.send_missing()
             return
+        path = Path(path)
         self.send_bytes(path.read_bytes(), _mime(path))
 
     def do_DELETE(self) -> None:
@@ -362,8 +412,7 @@ class Handler(BaseHTTPRequestHandler):
         path   = urllib.parse.unquote(parsed.path)
 
         if not path.startswith("/api/notes/"):
-            self.send_response(HTTPStatus.NOT_FOUND)
-            self.end_headers()
+            self.send_missing()
             return
 
         filename = path[len("/api/notes/"):]
@@ -378,35 +427,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         filepath.unlink()
-
-        global INDEX, _TREE, _BY_PATH, _BACKLINKS
-        note_path = f"/notes-html/{filename}"
-        new_index: list[dict] = []
-        for entry in INDEX:
-            langs = entry.get("langs")
-            if langs and note_path in langs.values():
-                removed_lang = next(l for l, p in langs.items() if p == note_path)
-                del langs[removed_lang]
-                if not langs:
-                    continue
-                if entry["path"] == note_path:
-                    default_lang = pick_default_lang(langs)
-                    default_path = langs[default_lang]
-                    title, body = extract_title_body(NOTES_DIR / Path(default_path).name)
-                    entry["title"], entry["body"], entry["path"] = title, body, default_path
-                new_index.append(entry)
-            elif entry.get("path") == note_path:
-                continue
-            else:
-                new_index.append(entry)
-
-        INDEX = new_index
-        _TREE = build_tree(INDEX)
-        _BY_PATH = build_by_path(INDEX)
-        _BACKLINKS = build_backlinks(INDEX)
-        with open(INDEX_PATH, "w", encoding="utf-8") as f:
-            json.dump(INDEX, f, ensure_ascii=False, indent=2)
-
+        reload_index()
         self.send_json({"ok": True, "count": len(INDEX)})
 
     def do_GET(self) -> None:
@@ -420,16 +441,13 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── Search API ──────────────────────────────────────────────────────────
         elif path == "/api/search":
-            q     = qs.get("q",     [""])[0].strip()
-            cls   = qs.get("cls",   [""])[0].strip()
-            cat   = qs.get("cat",   [""])[0].strip()
+            q     = qs.get("q",   [""])[0].strip()
+            cls   = qs.get("cls", [""])[0].strip()
             limit = int(qs.get("limit", ["50"])[0])
 
             pool = INDEX
             if cls:
                 pool = [e for e in pool if "/".join(e.get("crumb", [])).startswith(cls)]
-            if cat:
-                pool = [e for e in pool if e.get("category") == cat]
 
             if q:
                 results, total = do_search(q, limit, pool)
@@ -437,8 +455,7 @@ class Handler(BaseHTTPRequestHandler):
                 pool = sorted(pool, key=lambda e: _MTIMES.get(e["path"], 0.0), reverse=True)
                 results = [
                     {"title": e["title"], "path": e["path"],
-                     "crumb": e.get("crumb", []), "category": e.get("category"),
-                     "snippet": "", "langs": e.get("langs")}
+                     "crumb": e.get("crumb", []), "snippet": "", "langs": e.get("langs")}
                     for e in pool[:limit]
                 ]
                 total = len(pool)
@@ -451,40 +468,47 @@ class Handler(BaseHTTPRequestHandler):
 
         # ── Reload index ──────────────────────────────────────────────────────────
         elif path == "/api/reload":
-            load_index()
+            reload_index()
             self.send_json({"ok": True, "count": len(INDEX)})
 
-        # ── Note files (inject TOC) ───────────────────────────────────────────────
-        elif path.startswith("/notes-html/"):
-            filepath = NOTES_DIR / path[len("/notes-html/"):]
-            if not filepath.is_file():
-                self.send_response(HTTPStatus.NOT_FOUND)
-                self.end_headers()
+        # ── Stored notes (inject TOC) ─────────────────────────────────────────────
+        elif path.startswith(URL_PREFIX):
+            filepath = resolve_in(NOTES_DIR, path[len(URL_PREFIX):])
+            if filepath is None or not filepath.is_file():
+                self.send_missing()
                 return
             if filepath.suffix == ".html":
                 entry = _BY_PATH.get(path)
                 langs = entry.get("langs") if entry else None
-                category = entry.get("category") if entry else None
+                crumb = entry.get("crumb") if entry else None
                 backlinks = _BACKLINKS.get(path)
-                page_html = inject_toc(filepath.read_text(encoding="utf-8"), langs, path, category, backlinks)
+                page_html = inject_toc(
+                    filepath.read_text(encoding="utf-8"), langs, path, crumb, backlinks
+                )
                 self.send_bytes(page_html.encode("utf-8"), "text/html; charset=utf-8")
             else:
                 self.send_file(filepath)
 
         # ── Static assets ──────────────────────────────────────────────────────────
         elif path.startswith("/assets/"):
-            self.send_file(ASSETS_DIR / path[len("/assets/"):])
+            self.send_file(resolve_in(ASSETS_DIR, path[len("/assets/"):]))
 
         else:
-            self.send_response(HTTPStatus.NOT_FOUND)
-            self.end_headers()
+            self.send_missing()
 
 
 if __name__ == "__main__":
-    ensure_notes_html()
-    load_index()
+    if not NOTES_DIR.is_dir():
+        raise SystemExit(
+            f"笔记目录不存在: {NOTES_DIR}\n"
+            "请设置 KNOWLEDGE_HTML_PATH 指向存放笔记 HTML 的目录。"
+        )
+    reload_index()
+    print(f"已从 {NOTES_DIR} 加载 {len(INDEX)} 篇笔记")
+    if AUTO_WATCH:
+        threading.Thread(target=watch_store, daemon=True).start()
     server = ThreadingHTTPServer((HOST, DEFAULT_PORT), Handler)
-    print(f"笔记管理器运行在 http://{HOST}:{DEFAULT_PORT}")
+    print(f"知识库运行在 http://{HOST}:{DEFAULT_PORT}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

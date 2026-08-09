@@ -1,85 +1,219 @@
+/* The stylesheet every stored note links to.
+
+   The knowledge base reads like paper-notes (8035): the same palette, the same
+   serif measured column, so moving between a topic note here and a paper note
+   there is not a change of typeface. The variables below are copied from that
+   app's app.css rather than reinvented — keep the two in step.
+
+   Notes are pandoc output, so this styles bare tags. Pandoc's own <style> block
+   sits above the link to this file and sets no colours, so these rules win. */
+
+:root {
+  --bg: #faf9f7;
+  --fg: #1a1a1a;
+  --muted: #888;
+  --accent: #3a5f8a;
+  --border: #e0ddd8;
+  --card-bg: #ffffff;
+  --header-bg: #f5f3ef;
+  --chip-bg: #eeeae4;
+  --column: 46rem;
+  /* The table of contents is injected as a fixed rail in the left gutter
+     (server.py's _TOC_INJECT), and it is the column's own half-width that
+     positions it — so the two must be described in one place. */
+  --rail: 13rem;
+  --rail-gap: 2.5rem;
+  font-size: 16px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  line-height: 1.7;
-  color: #333;
-  max-width: 900px;
+  max-width: var(--column);
   margin: 0 auto;
-  padding: 2rem 1.5rem;
+  padding: 2.5rem 1.5rem 5rem;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Georgia', 'Noto Serif SC', serif;
+  font-size: .95rem;
+  line-height: 1.7;
 }
-h1, h2, h3, h4, h5, h6 { margin-bottom: 0.5rem; color: #2e6da4; }
-h1 { font-size: 1.8rem; border-bottom: 2px solid #ddd; padding-bottom: 0.4rem; }
-h5 { font-size: 1rem; margin-top: 1.2rem; }
-a { color: #0066cc; text-decoration: none; }
-a:hover { text-decoration: underline; }
-ul { padding-left: 1.5rem; }
-li { margin: 0.4rem 0; }
-p { margin: 0.9rem 0; }
-img { max-width: 100%; height: auto; display: block; margin: 1rem auto; }
-strong { color: #111; }
-.references { margin-top: 2.5rem; border-top: 1px solid #ddd; padding-top: 1rem; }
-.references p { margin: 0.3rem 0; font-size: 0.92rem; color: #444; }
-h2 { font-size: 1.3rem; margin-top: 1.5rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
-h3 { font-size: 1.05rem; margin-top: 1.1rem; }
-h4 { font-size: 0.98rem; margin-top: 0.9rem; }
-h6 { font-size: 0.88rem; margin-top: 0.8rem; font-weight: 600; }
-blockquote { margin: 1rem 0; padding: 0.5rem 1rem; border-left: 3px solid #d0d7de; color: #555; background: #f8fafc; }
-blockquote p { margin: 0.3rem 0; }
-code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace; font-size: 0.875em; background: #f0f4f8; padding: 0.15em 0.4em; border-radius: 3px; }
-pre { background: #f0f4f8; border: 1px solid #d0d7de; border-radius: 4px; padding: 1rem; overflow-x: auto; margin: 1rem 0; }
-pre code { background: none; padding: 0; font-size: 0.85rem; }
-hr { border: none; border-top: 1px solid #ddd; margin: 1.5rem 0; }
-ol { padding-left: 1.5rem; }
-ol li { margin: 0.4rem 0; }
-table:not(.benchmark-table) { border-collapse: collapse; width: 100%; font-size: 0.9rem; margin: 1rem 0; }
-table:not(.benchmark-table) th { background: #f0f4f8; text-align: left; padding: 0.45rem 0.75rem; border: 1px solid #d0d7de; font-weight: 600; color: #24292f; }
-table:not(.benchmark-table) td { padding: 0.4rem 0.75rem; border: 1px solid #d0d7de; vertical-align: top; }
-table:not(.benchmark-table) tbody tr:nth-child(even) { background: #f8fafc; }
-.table-wrapper { overflow-x: auto; margin: 1rem 0; }
-table.benchmark-table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 0.88rem;
+
+/* ── Headings ──
+   A note's own heading levels are whatever its source used — the tmux note
+   runs h1/h3/h5 — so the scale is deliberately flat and nothing is muted:
+   an h5 here is a real section, not an aside. The outline numbers and the
+   rail carry the hierarchy. */
+h1, h2, h3, h4, h5, h6 {
+  margin: 1.8em 0 .5em;
+  font-weight: 700;
+  line-height: 1.35;
+  scroll-margin-top: 1.5rem;
 }
-table.benchmark-table th {
-  background: #f0f4f8;
+h1 {
+  margin-top: 0;
+  padding-bottom: .4rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.5rem;
+}
+h2 { font-size: 1.16em; }
+h3 { font-size: 1.08em; }
+h4 { font-size: 1.02em; }
+h5, h6 { font-size: .98em; }
+
+p { margin: .8em 0; }
+ul, ol { margin: .7em 0; padding-left: 1.5em; }
+li { margin: .25em 0; }
+strong { font-weight: 700; }
+hr { border: none; border-top: 1px solid var(--border); margin: 1.6rem 0; }
+
+a { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); }
+a:hover { border-bottom-style: solid; }
+/* A citation marker should not carry a rule under it. */
+sup a { border: none; font-size: .78em; }
+
+code {
+  font-family: 'SF Mono', 'Fira Code', 'SFMono-Regular', Menlo, monospace;
+  font-size: .86em;
+  background: var(--chip-bg);
+  border-radius: 3px;
+  padding: .05em .3em;
+}
+pre {
+  margin: .9em 0;
+  padding: .7rem .9rem;
+  background: var(--chip-bg);
+  border-radius: 4px;
+  overflow-x: auto;
+}
+pre code { background: none; padding: 0; }
+
+blockquote {
+  margin: .9em 0;
+  padding-left: .9rem;
+  border-left: 2px solid var(--border);
+  color: var(--muted);
+}
+blockquote p { margin: .3em 0; }
+
+/* Wide tables and long formulas scroll inside the note, never the page. */
+.table-wrapper, mjx-container[display="true"] { overflow-x: auto; }
+table { border-collapse: collapse; margin: .9em 0; font-size: .94em; }
+th, td {
+  border: 1px solid var(--border);
+  padding: .3em .6em;
   text-align: left;
-  padding: 0.5rem 0.75rem;
-  border: 1px solid #d0d7de;
-  white-space: nowrap;
-  font-weight: 600;
-  color: #24292f;
+  vertical-align: top;
 }
-table.benchmark-table td {
-  padding: 0.45rem 0.75rem;
-  border: 1px solid #d0d7de;
-  vertical-align: middle;
+th { background: var(--header-bg); font-weight: 700; }
+
+img { max-width: 100%; height: auto; display: block; margin: 1.2rem auto; border-radius: 4px; }
+
+/* ── Figures ──
+   A caption is an annotation of the thing above it, not a paragraph of the
+   note, so it is set narrower than the text column and centred under the
+   figure. It must NOT borrow the left rule: that is the blockquote's mark
+   (see above), and a caption wearing it reads as a quotation. Italic and
+   centred is the caption convention instead, and nothing else here is
+   either. The figure's own content supplies the top margin, so img/svg lose
+   theirs or the gap doubles. */
+figure { margin: 1.8em 0; text-align: center; }
+figure > img, figure > svg { margin: 0 auto; }
+figcaption {
+  margin: .55em auto 0;
+  max-width: 34rem;
+  font-size: .8rem;
+  line-height: 1.55;
+  font-style: italic;
+  color: var(--muted);
+  text-align: center;
+  text-wrap: pretty;
 }
-table.benchmark-table tbody tr:nth-child(even) { background: #f8fafc; }
-table.benchmark-table tbody tr:hover { background: #eef4ff; }
-.check { color: #1a7f37; font-weight: bold; }
-.dash  { color: #aaa; }
-.env-simulated { background: #dbeafe; color: #1e40af; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.env-real      { background: #dcfce7; color: #166534; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.env-mixed     { background: #fef9c3; color: #854d0e; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.modal-image { background: #fdf2f8; color: #9d174d; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.modal-video { background: #fef3c7; color: #92400e; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.form-chat   { background: #ede9fe; color: #5b21b6; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.form-script { background: #fce7f3; color: #831843; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.form-docs   { background: #f3f4f6; color: #374151; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.form-task   { background: #d1fae5; color: #065f46; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.form-web    { background: #ffedd5; color: #9a3412; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.form-game     { background: #cffafe; color: #164e63; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.form-lifedata { background: #fef2f2; color: #991b1b; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.scene-user-modeling { background: #f5f3ff; color: #6d28d9; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.scene-episodic      { background: #eff6ff; color: #1d4ed8; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.scene-agent           { background: #fffbeb; color: #b45309; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.scene-lifelong        { background: #ecfdf5; color: #047857; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
-.scene-social          { background: #fff1f2; color: #be123c; border-radius: 3px; padding: 1px 6px; font-size: 0.82rem; white-space: nowrap; }
+figcaption a { color: var(--muted); border-bottom-color: var(--border); }
+figcaption a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+.references {
+  margin-top: 2em;
+  padding-top: .9em;
+  border-top: 1px solid var(--border);
+  font-size: .82em;
+  color: var(--muted);
+}
+.references p { margin: .25em 0; }
+
+/* ── One note's own furniture ──
+   llm-memory-benchmark.html is hand-written and ships a comparison table with
+   colour-coded cells. It is the only note using any of this; the hues are kept
+   but re-expressed against the palette so they hold up on a dark page too. */
+table.benchmark-table { width: 100%; font-size: .88em; }
+table.benchmark-table th { white-space: nowrap; }
+table.benchmark-table td { vertical-align: middle; }
+table.benchmark-table tbody tr:hover { background: var(--header-bg); }
 table.benchmark-table td:nth-child(8),
 table.benchmark-table th:nth-child(8) { min-width: 320px; }
-td.name-cell a { font-weight: 500; }
-td.name-cell sup { font-size: 0.75rem; margin-left: 2px; }
-td.name-cell sup a { color: #0066cc; text-decoration: none; font-weight: normal; }
-td.name-cell sup a:hover { text-decoration: underline; }
-p sup a, li sup a { color: #0066cc; text-decoration: none; font-weight: normal; }
-p sup a:hover, li sup a:hover { text-decoration: underline; }
+td.name-cell a { font-weight: 700; }
+
+.check { color: #1a7f37; font-weight: 700; }
+.dash { color: var(--muted); }
+.env-simulated, .env-real, .env-mixed,
+.modal-image, .modal-video,
+.form-chat, .form-script, .form-docs, .form-task, .form-web,
+.form-game, .form-lifedata,
+.scene-user-modeling, .scene-episodic, .scene-agent,
+.scene-lifelong, .scene-social {
+  border-radius: 999px;
+  padding: .05em .55em;
+  font-size: .82em;
+  white-space: nowrap;
+}
+.env-simulated { background: #dbeafe; color: #1e40af; }
+.env-real      { background: #dcfce7; color: #166534; }
+.env-mixed     { background: #fef9c3; color: #854d0e; }
+.modal-image   { background: #fdf2f8; color: #9d174d; }
+.modal-video   { background: #fef3c7; color: #92400e; }
+.form-chat     { background: #ede9fe; color: #5b21b6; }
+.form-script   { background: #fce7f3; color: #831843; }
+.form-docs     { background: #f3f4f6; color: #374151; }
+.form-task     { background: #d1fae5; color: #065f46; }
+.form-web      { background: #ffedd5; color: #9a3412; }
+.form-game     { background: #cffafe; color: #164e63; }
+.form-lifedata { background: #fef2f2; color: #991b1b; }
+.scene-user-modeling { background: #f5f3ff; color: #6d28d9; }
+.scene-episodic      { background: #eff6ff; color: #1d4ed8; }
+.scene-agent         { background: #fffbeb; color: #b45309; }
+.scene-lifelong      { background: #ecfdf5; color: #047857; }
+.scene-social        { background: #fff1f2; color: #be123c; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17161a;
+    --fg: #e8e5df;
+    --muted: #888;
+    --accent: #7cafd6;
+    --border: #2e2c30;
+    --card-bg: #1e1c21;
+    --header-bg: #27242c;
+    --chip-bg: #2c2930;
+  }
+  /* Diagrams in these notes are black line art on transparency, which vanishes
+     on a dark page. A white plate rather than an invert filter: the drawings
+     carry colour that means something, and inverting would recolour it. */
+  img { background: #fff; padding: .4rem; }
+  .env-simulated { background: #23343d; color: #9cc7dd; }
+  .env-real      { background: #22332a; color: #97c7ab; }
+  .env-mixed     { background: #3a3524; color: #d8cc8a; }
+  .modal-image   { background: #382631; color: #d7a3bd; }
+  .modal-video   { background: #3a2f24; color: #d3a878; }
+  .form-chat     { background: #2d2839; color: #bbaada; }
+  .form-script   { background: #382630; color: #d7a1bb; }
+  .form-docs     { background: #2b2b2e; color: #b8b8be; }
+  .form-task     { background: #22332c; color: #96c8b1; }
+  .form-web      { background: #3a2e24; color: #d5ab7f; }
+  .form-game     { background: #1f3338; color: #92c4cf; }
+  .form-lifedata { background: #382628; color: #d5a09f; }
+  .scene-user-modeling { background: #2e2839; color: #bda9dd; }
+  .scene-episodic      { background: #232f3f; color: #9fbde0; }
+  .scene-agent         { background: #38301f; color: #d6b880; }
+  .scene-lifelong      { background: #223328; color: #96c7a5; }
+  .scene-social        { background: #38262c; color: #d79fae; }
+}

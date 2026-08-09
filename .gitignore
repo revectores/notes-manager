@@ -3,9 +3,9 @@ __pycache__/
 logs/
 .DS_Store
 
-# Generated search index (regenerated from notes-html on every sync)
+# Leftovers from the Markdown era, kept only so the migration can be re-run or
+# checked against. The notes themselves now live in the store outside this repo
+# (see AGENTS.md); nothing here reads either of these any more.
 assets/search-index.json
 assets/search-index.json.bak
-
-# Generated HTML views (regenerated from ../knowledge/notes and chats)
 notes-html/
