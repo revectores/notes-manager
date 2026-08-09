@@ -6,7 +6,7 @@
 
 Everything in this repo is the reader — `server.py` (stdlib `ThreadingHTTPServer`), `note_index.py` (builds the search index by reading the store), `note_lang.py` (multi-language grouping), `index.html` and `assets/`.
 
-It was called `notes-manager` until August 2026, and its GitHub remote still is — `revectores/notes-manager.git`, left alone the same way paper-notes kept `paper-manager.git`. The name was taken at the time by a browser-authored wiki on port 8054; that app was removed, this one kept port 8024, and 8054 is now unassigned. Anything still saying `notes-manager` or `NOTES_*` is stale: the env vars are `KNOWLEDGE_HTML_PATH`, `KNOWLEDGE_WATCH_INTERVAL` and `KNOWLEDGE_AUTO_WATCH`.
+It was called `notes-manager` until August 2026 — GitHub remote included, which is where it differs from paper-notes, still served by `paper-manager.git`. The name was taken at the time by a browser-authored wiki on port 8054; that app was removed, this one kept port 8024, and 8054 is now unassigned. Anything still saying `notes-manager` or `NOTES_*` is stale: the env vars are `KNOWLEDGE_HTML_PATH`, `KNOWLEDGE_WATCH_INTERVAL` and `KNOWLEDGE_AUTO_WATCH`.
 
 ## The note store
 
